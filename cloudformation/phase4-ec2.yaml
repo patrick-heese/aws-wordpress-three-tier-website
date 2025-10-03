@@ -1,0 +1,277 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Phase 4 – Two EC2 app servers in private subnets + Public ALB (robust /health, EFS retries, DB bootstrap)
+
+Parameters:
+  WebAmiId:
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64"
+    Description: Amazon Linux 2023 AMI via SSM
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 KeyPair name (kept even if SSH isn’t exposed)
+  DBUser:
+    Type: String
+    Default: admin
+    Description: WordPress DB user
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Description: WordPress DB password
+
+Resources:
+  WPALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: WP-ALB
+      Scheme: internet-facing
+      Type: application
+      IpAddressType: ipv4
+      SecurityGroups:
+        - !ImportValue WPALBSG
+      Subnets:
+        - !ImportValue WPPublicSubnet1
+        - !ImportValue WPPublicSubnet2
+      Tags:
+        - Key: Name
+          Value: WP-ALB
+
+  WPTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn:
+      - AppServer1
+      - AppServer2
+    Properties:
+      Name: WP-App-TG
+      TargetType: instance
+      Port: 80
+      Protocol: HTTP
+      VpcId: !ImportValue WPVPC
+      HealthCheckEnabled: true
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 20
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Matcher:
+        HttpCode: 200
+      Targets:
+        - Id: !Ref AppServer1
+          Port: 80
+        - Id: !Ref AppServer2
+          Port: 80
+      Tags:
+        - Key: Name
+          Value: WP-App-TG
+
+  HTTPListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref WPALB
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref WPTargetGroup
+
+  AppServer1:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref WebAmiId
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      SubnetId: !ImportValue WPPrivateAppSubnet1
+      SecurityGroupIds:
+        - !ImportValue WPAppSG
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 16
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: wp-app-1
+      UserData:
+        Fn::Base64:
+          !Sub
+            - |
+              #!/bin/bash
+              set -euxo pipefail
+              exec > >(tee -a /var/log/user-data.log) 2>&1
+
+              EFS_ID='${EfsId}'
+              RDS_HOST='${RdsEndpoint}'
+              DB_NAME='wordpress'
+              DB_USER='${DbUserVal}'
+              DB_PASS='${DbPassVal}'
+              ALB_DNS='${AlbDNS}'
+
+              dnf -y update || true
+              dnf -y install --allowerasing \
+                httpd php php-cli php-common php-mbstring php-gd php-xml php-mysqlnd php-intl php-zip php-fpm \
+                amazon-efs-utils mariadb105
+
+              systemctl enable --now php-fpm
+              systemctl enable --now httpd
+
+              mkdir -p /var/www/html
+              echo "ok" > /var/www/html/health
+
+              FSTAB_LINE="${!EFS_ID}.efs.${AWS::Region}.amazonaws.com:/ /var/www/html efs _netdev,tls 0 0"
+              grep -q "$EFS_ID.efs." /etc/fstab || echo "$FSTAB_LINE" >> /etc/fstab
+              for i in $(seq 1 24); do
+                mountpoint -q /var/www/html && break
+                echo "Mounting EFS attempt $i..."
+                mount -a || true
+                sleep 5
+              done
+              if mountpoint -q /var/www/html; then
+                echo "ok" > /var/www/html/health || true
+              else
+                echo "EFS not mounted; continuing on local disk for health."
+              fi
+
+              if [ ! -f /var/www/html/wp-settings.php ]; then
+                cd /tmp
+                curl -fsSLO https://wordpress.org/latest.tar.gz
+                tar -xzf latest.tar.gz
+                cp -r wordpress/* /var/www/html/
+              fi
+
+              chown -R apache:apache /var/www/html
+              find /var/www/html -type d -exec chmod 2775 {} \;
+              find /var/www/html -type f -exec chmod 0664 {} \;
+
+              if [ ! -f /var/www/html/wp-config.php ]; then
+                cp /var/www/html/wp-config-sample.php /var/www/html/wp-config.php
+                sed -i "s/database_name_here/$DB_NAME/" /var/www/html/wp-config.php
+                sed -i "s/username_here/$DB_USER/" /var/www/html/wp-config.php
+                sed -i "s/password_here/$DB_PASS/" /var/www/html/wp-config.php
+                sed -i "s/localhost/$RDS_HOST/" /var/www/html/wp-config.php
+                SALTS="$(curl -fsS https://api.wordpress.org/secret-key/1.1/salt/ || true)"
+                [ -n "$SALTS" ] && printf '%s\n' "$SALTS" >> /var/www/html/wp-config.php || true
+              fi
+
+              grep -q "WP_HOME" /var/www/html/wp-config.php || printf "\ndefine('WP_HOME','http://%s');\n" "$ALB_DNS" >> /var/www/html/wp-config.php
+              grep -q "WP_SITEURL" /var/www/html/wp-config.php || printf "define('WP_SITEURL','http://%s');\n" "$ALB_DNS" >> /var/www/html/wp-config.php
+
+              if command -v mysql >/dev/null 2>&1; then
+                mysql -h "$RDS_HOST" -u "$DB_USER" -p"$DB_PASS" -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`;" || true
+              fi
+
+              systemctl restart php-fpm
+              systemctl restart httpd
+            - EfsId: !ImportValue WPEfsId
+              RdsEndpoint: !ImportValue WPRDSEndpoint
+              AlbDNS: !GetAtt WPALB.DNSName
+              DbUserVal: !Ref DBUser
+              DbPassVal: !Ref DBPassword
+
+
+  AppServer2:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref WebAmiId
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      SubnetId: !ImportValue WPPrivateAppSubnet2
+      SecurityGroupIds:
+        - !ImportValue WPAppSG
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 16
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: wp-app-2
+      UserData:
+        Fn::Base64:
+          !Sub
+            - |
+              #!/bin/bash
+              set -euxo pipefail
+              exec > >(tee -a /var/log/user-data.log) 2>&1
+
+              EFS_ID='${EfsId}'
+              RDS_HOST='${RdsEndpoint}'
+              DB_NAME='wordpress'
+              DB_USER='${DbUserVal}'
+              DB_PASS='${DbPassVal}'
+              ALB_DNS='${AlbDNS}'
+
+              dnf -y update || true
+              dnf -y install --allowerasing \
+                httpd php php-cli php-common php-mbstring php-gd php-xml php-mysqlnd php-intl php-zip php-fpm \
+                amazon-efs-utils mariadb105
+
+              systemctl enable --now php-fpm
+              systemctl enable --now httpd
+
+              mkdir -p /var/www/html
+              echo "ok" > /var/www/html/health
+
+              FSTAB_LINE="${!EFS_ID}.efs.${AWS::Region}.amazonaws.com:/ /var/www/html efs _netdev,tls 0 0"
+              grep -q "$EFS_ID.efs." /etc/fstab || echo "$FSTAB_LINE" >> /etc/fstab
+              for i in $(seq 1 24); do
+                mountpoint -q /var/www/html && break
+                echo "Mounting EFS attempt $i..."
+                mount -a || true
+                sleep 5
+              done
+              if mountpoint -q /var/www/html; then
+                echo "ok" > /var/www/html/health || true
+              else
+                echo "EFS not mounted; continuing on local disk for health."
+              fi
+
+              if [ ! -f /var/www/html/wp-settings.php ]; then
+                cd /tmp
+                curl -fsSLO https://wordpress.org/latest.tar.gz
+                tar -xzf latest.tar.gz
+                cp -r wordpress/* /var/www/html/
+              fi
+
+              chown -R apache:apache /var/www/html
+              find /var/www/html -type d -exec chmod 2775 {} \;
+              find /var/www/html -type f -exec chmod 0664 {} \;
+
+              if [ ! -f /var/www/html/wp-config.php ]; then
+                cp /var/www/html/wp-config-sample.php /var/www/html/wp-config.php
+                sed -i "s/database_name_here/$DB_NAME/" /var/www/html/wp-config.php
+                sed -i "s/username_here/$DB_USER/" /var/www/html/wp-config.php
+                sed -i "s/password_here/$DB_PASS/" /var/www/html/wp-config.php
+                sed -i "s/localhost/$RDS_HOST/" /var/www/html/wp-config.php
+                SALTS="$(curl -fsS https://api.wordpress.org/secret-key/1.1/salt/ || true)"
+                [ -n "$SALTS" ] && printf '%s\n' "$SALTS" >> /var/www/html/wp-config.php || true
+              fi
+
+              grep -q "WP_HOME" /var/www/html/wp-config.php || printf "\ndefine('WP_HOME','http://%s');\n" "$ALB_DNS" >> /var/www/html/wp-config.php
+              grep -q "WP_SITEURL" /var/www/html/wp-config.php || printf "define('WP_SITEURL','http://%s');\n" "$ALB_DNS" >> /var/www/html/wp-config.php
+
+              if command -v mysql >/dev/null 2>&1; then
+                mysql -h "$RDS_HOST" -u "$DB_USER" -p"$DB_PASS" -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`;" || true
+              fi
+
+              systemctl restart php-fpm
+              systemctl restart httpd
+            - EfsId: !ImportValue WPEfsId
+              RdsEndpoint: !ImportValue WPRDSEndpoint
+              AlbDNS: !GetAtt WPALB.DNSName
+              DbUserVal: !Ref DBUser
+              DbPassVal: !Ref DBPassword
+
+Outputs:
+  ALBDNSName:
+    Description: ALB DNS
+    Value: !GetAtt WPALB.DNSName
+  AppServer1Id:
+    Description: Instance ID for wp-app-1
+    Value: !Ref AppServer1
+  AppServer2Id:
+    Description: Instance ID for wp-app-2
+    Value: !Ref AppServer2

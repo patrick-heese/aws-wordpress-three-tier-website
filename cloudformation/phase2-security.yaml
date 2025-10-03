@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Phase 2 – Security Groups for WordPress 3-tier
+
+Parameters:
+  AdminIp:
+    Type: String
+    Default: 0.0.0.0/32
+    Description: Your public /32 to allow SSH into Bastion
+    AllowedPattern: '^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/32$'
+
+Resources:
+  ALBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for Application Load Balancer
+      VpcId: !ImportValue WPVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: WP-ALB-SG
+
+  BastionSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Bastion SG (SSH from AdminIp)
+      VpcId: !ImportValue WPVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AdminIp
+      Tags:
+        - Key: Name
+          Value: WP-Bastion-SG
+
+  AppSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: App EC2 SG (HTTP from ALB; SSH from Bastion; EFS/RDS egress)
+      VpcId: !ImportValue WPVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSG
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !Ref BastionSG
+      Tags:
+        - Key: Name
+          Value: WP-App-SG
+
+  DBRG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: DB SG (from App)
+      VpcId: !ImportValue WPVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref AppSG
+      Tags:
+        - Key: Name
+          Value: WP-DB-SG
+
+  EFSSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EFS SG (NFS 2049 from App)
+      VpcId: !ImportValue WPVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref AppSG
+      Tags:
+        - Key: Name
+          Value: WP-EFS-SG
+
+Outputs:
+  ALBSGId:
+    Description: ALB Security Group ID
+    Value: !Ref ALBSG
+    Export:
+      Name: WPALBSG
+
+  BastionSGId:
+    Description: Bastion Security Group ID
+    Value: !Ref BastionSG
+    Export:
+      Name: WPBastionSG
+
+  AppSGId:
+    Description: App Server Security Group ID
+    Value: !Ref AppSG
+    Export:
+      Name: WPAppSG
+
+  DBRGId:
+    Description: DB Security Group ID
+    Value: !Ref DBRG
+    Export:
+      Name: WPDBSG
+
+  EFSSGId:
+    Description: EFS Security Group ID
+    Value: !Ref EFSSG
+    Export:
+      Name: WPEFSSG

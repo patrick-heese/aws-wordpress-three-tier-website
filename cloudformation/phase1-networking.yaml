@@ -1,0 +1,304 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Phase 1 – Networking for WordPress 3-tier (VPC, subnets, IGW, 2× NAT, routes)
+
+Parameters:
+  VPCCidr:
+    Type: String
+    Description: CIDR block for the VPC
+
+  PublicSubnet1Cidr:
+    Type: String
+    Description: CIDR block for Public Subnet 1
+
+  PublicSubnet2Cidr:
+    Type: String
+    Description: CIDR block for Public Subnet 2
+
+  PrivateAppSubnet1Cidr:
+    Type: String
+    Description: CIDR block for Private App Subnet 1
+
+  PrivateAppSubnet2Cidr:
+    Type: String
+    Description: CIDR block for Private App Subnet 2
+
+  PrivateDBSubnet1Cidr:
+    Type: String
+    Description: CIDR block for Private DB Subnet 1
+
+  PrivateDBSubnet2Cidr:
+    Type: String
+    Description: CIDR block for Private DB Subnet 2
+
+Resources:
+  WPVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VPCCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: WP-3Tier-VPC
+
+  IGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: WP-IGW
+
+  AttachIGW:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref WPVPC
+      InternetGatewayId: !Ref IGW
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref WPVPC
+      CidrBlock: !Ref PublicSubnet1Cidr
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: WP-Public-1
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref WPVPC
+      CidrBlock: !Ref PublicSubnet2Cidr
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: WP-Public-2
+
+  PrivateAppSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref WPVPC
+      CidrBlock: !Ref PrivateAppSubnet1Cidr
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: WP-Private-App-1
+
+  PrivateAppSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref WPVPC
+      CidrBlock: !Ref PrivateAppSubnet2Cidr
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: WP-Private-App-2
+
+  PrivateDBSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref WPVPC
+      CidrBlock: !Ref PrivateDBSubnet1Cidr
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: WP-Private-DB-1
+
+  PrivateDBSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref WPVPC
+      CidrBlock: !Ref PrivateDBSubnet2Cidr
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: WP-Private-DB-2
+
+  EIPA:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  EIPB:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGw1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt EIPA.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: WP-NAT-1
+
+  NatGw2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt EIPB.AllocationId
+      SubnetId: !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: WP-NAT-2
+
+  PublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref WPVPC
+      Tags:
+        - Key: Name
+          Value: WP-Public-RT
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachIGW
+    Properties:
+      RouteTableId: !Ref PublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IGW
+
+  AssocPublic1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRT
+
+  AssocPublic2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRT
+
+  PrivateRTAppAZ1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref WPVPC
+      Tags:
+        - Key: Name
+          Value: WP-Private-App-RT-AZ1
+
+  PrivateRTAppAZ2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref WPVPC
+      Tags:
+        - Key: Name
+          Value: WP-Private-App-RT-AZ2
+
+  PrivateRTDBAZ1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref WPVPC
+      Tags:
+        - Key: Name
+          Value: WP-Private-DB-RT-AZ1
+
+  PrivateRTDBAZ2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref WPVPC
+      Tags:
+        - Key: Name
+          Value: WP-Private-DB-RT-AZ2
+
+  AppAZ1DefaultToNat:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRTAppAZ1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGw1
+
+  AppAZ2DefaultToNat:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRTAppAZ2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGw2
+
+  DBAZ1DefaultToNat:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRTDBAZ1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGw1
+
+  DBAZ2DefaultToNat:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRTDBAZ2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGw2
+
+  AssocApp1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateAppSubnet1
+      RouteTableId: !Ref PrivateRTAppAZ1
+
+  AssocApp2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateAppSubnet2
+      RouteTableId: !Ref PrivateRTAppAZ2
+
+  AssocDB1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateDBSubnet1
+      RouteTableId: !Ref PrivateRTDBAZ1
+
+  AssocDB2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateDBSubnet2
+      RouteTableId: !Ref PrivateRTDBAZ2
+
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !Ref WPVPC
+    Export:
+      Name: WPVPC
+
+  PublicSubnet1Id:
+    Description: Public Subnet 1 ID
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: WPPublicSubnet1
+
+  PublicSubnet2Id:
+    Description: Public Subnet 2 ID
+    Value: !Ref PublicSubnet2
+    Export:
+      Name: WPPublicSubnet2
+
+  PrivateAppSubnet1Id:
+    Description: Private App Subnet 1 ID
+    Value: !Ref PrivateAppSubnet1
+    Export:
+      Name: WPPrivateAppSubnet1
+
+  PrivateAppSubnet2Id:
+    Description: Private App Subnet 2 ID
+    Value: !Ref PrivateAppSubnet2
+    Export:
+      Name: WPPrivateAppSubnet2
+
+  PrivateDBSubnet1Id:
+    Description: Private DB Subnet 1 ID
+    Value: !Ref PrivateDBSubnet1
+    Export:
+      Name: WPPrivateDBSubnet1
+
+  PrivateDBSubnet2Id:
+    Description: Private DB Subnet 2 ID
+    Value: !Ref PrivateDBSubnet2
+    Export:
+      Name: WPPrivateDBSubnet2

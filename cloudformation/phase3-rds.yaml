@@ -1,0 +1,137 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Phase 3 – RDS MySQL (Multi-AZ) + DB Subnet Group + EFS (+ optional Bastion)
+
+Parameters:
+  DBUser:
+    Type: String
+    Default: admin
+    Description: Master username for the RDS database
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Description: Master password for the RDS database
+
+  CreateBastion:
+    Type: String
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "false"
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: ""
+    Description: KeyPair used by Bastion when CreateBastion=true
+
+  BastionAmiId:
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64"
+
+  AdminIp:
+    Type: String
+    Default: 0.0.0.0/32
+    Description: Your /32 for info output (actual rule is in Phase 2)
+
+Conditions:
+  DoBastion:
+    !Equals [ !Ref CreateBastion, "true" ]
+
+Resources:
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: WP DB Subnets
+      SubnetIds:
+        - !ImportValue WPPrivateDBSubnet1
+        - !ImportValue WPPrivateDBSubnet2
+      DBSubnetGroupName: WP-DB-SubnetGroup
+
+  WPDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: wp-mysql
+      DBInstanceClass: db.t3.micro
+      Engine: mysql
+      EngineVersion: 8.0.43
+      AllocatedStorage: 20
+      MaxAllocatedStorage: 100
+      StorageType: gp3
+      MultiAZ: true
+      PubliclyAccessible: false
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !ImportValue WPDBSG
+      MasterUsername: !Ref DBUser
+      MasterUserPassword: !Ref DBPassword
+      DeletionProtection: false
+      BackupRetentionPeriod: 7
+      CopyTagsToSnapshot: true
+      Tags:
+        - Key: Name
+          Value: WP-RDS-MySQL
+
+  EFS:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+      FileSystemTags:
+        - Key: Name
+          Value: WP-EFS
+
+  MountTargetApp1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFS
+      SubnetId: !ImportValue WPPrivateAppSubnet1
+      SecurityGroups:
+        - !ImportValue WPEFSSG
+
+  MountTargetApp2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFS
+      SubnetId: !ImportValue WPPrivateAppSubnet2
+      SecurityGroups:
+        - !ImportValue WPEFSSG
+
+  BastionHost:
+    Condition: DoBastion
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref BastionAmiId
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      SubnetId: !ImportValue WPPublicSubnet1
+      SecurityGroupIds:
+        - !ImportValue WPBastionSG
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: wp-bastion
+
+Outputs:
+  RDSEndpoint:
+    Description: RDS endpoint address
+    Value: !GetAtt WPDatabase.Endpoint.Address
+    Export:
+      Name: WPRDSEndpoint
+
+  EfsId:
+    Description: EFS FileSystem ID
+    Value: !Ref EFS
+    Export:
+      Name: WPEfsId
+
+  BastionInstanceId:
+    Condition: DoBastion
+    Description: Bastion instance id (only when created)
+    Value: !Ref BastionHost
