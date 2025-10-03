@@ -1,0 +1,135 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Parent stack – WordPress 3-tier (orchestrates Phase 1–4 as nested stacks)
+
+Parameters:
+  DBUser:
+    Type: String
+    Default: admin
+    Description: RDS master username
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Description: RDS master password
+
+  VPCCidr:
+    Type: String
+    Default: 10.0.0.0/16
+
+  PublicSubnet1Cidr:
+    Type: String
+    Default: 10.0.0.0/24
+
+  PublicSubnet2Cidr:
+    Type: String
+    Default: 10.0.1.0/24
+
+  PrivateAppSubnet1Cidr:
+    Type: String
+    Default: 10.0.2.0/24
+
+  PrivateAppSubnet2Cidr:
+    Type: String
+    Default: 10.0.3.0/24
+
+  PrivateDBSubnet1Cidr:
+    Type: String
+    Default: 10.0.4.0/24
+
+  PrivateDBSubnet2Cidr:
+    Type: String
+    Default: 10.0.5.0/24
+
+  # URLs to the child templates in S3 (you upload these after creating the bucket)
+  Phase1TemplateUrl:
+    Type: String
+    Description: S3 URL to Phase 1 template
+
+  Phase2TemplateUrl:
+    Type: String
+    Description: S3 URL to Phase 2 template
+
+  Phase3TemplateUrl:
+    Type: String
+    Description: S3 URL to Phase 3 template
+
+  Phase4TemplateUrl:
+    Type: String
+    Description: S3 URL to Phase 4 template
+
+  # SSH / Bastion controls (optional- only use if SSH access to application servers is needed)
+  AdminIp:
+    Type: String
+    Default: 0.0.0.0/32
+    Description: Your public /32 for Bastion SSH (e.g., 203.0.113.5/32)
+    AllowedPattern: '^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/32$'
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: ""
+    Description: EC2 KeyPair used by Bastion and App servers (if Bastion enabled)
+
+  CreateBastion:
+    Type: String
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "false"
+    Description: Set to "true" to create a public Bastion for SSH into private app servers
+
+Resources:
+  Phase1:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Ref Phase1TemplateUrl
+      Parameters:
+        VPCCidr: !Ref VPCCidr
+        PublicSubnet1Cidr: !Ref PublicSubnet1Cidr
+        PublicSubnet2Cidr: !Ref PublicSubnet2Cidr
+        PrivateAppSubnet1Cidr: !Ref PrivateAppSubnet1Cidr
+        PrivateAppSubnet2Cidr: !Ref PrivateAppSubnet2Cidr
+        PrivateDBSubnet1Cidr: !Ref PrivateDBSubnet1Cidr
+        PrivateDBSubnet2Cidr: !Ref PrivateDBSubnet2Cidr
+
+  Phase2:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: Phase1
+    Properties:
+      TemplateURL: !Ref Phase2TemplateUrl
+      Parameters:
+        AdminIp: !Ref AdminIp
+
+  Phase3:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: Phase2
+    Properties:
+      TemplateURL: !Ref Phase3TemplateUrl
+      Parameters:
+        DBUser: !Ref DBUser
+        DBPassword: !Ref DBPassword
+        CreateBastion: !Ref CreateBastion
+        KeyName: !Ref KeyName
+        AdminIp: !Ref AdminIp
+
+  Phase4:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: Phase3
+    Properties:
+      TemplateURL: !Ref Phase4TemplateUrl
+      Parameters:
+        DBUser: !Ref DBUser
+        DBPassword: !Ref DBPassword
+        KeyName: !Ref KeyName
+
+Outputs:
+  ALBDNSName:
+    Description: Public DNS of the ALB
+    Value: !GetAtt Phase4.Outputs.ALBDNSName
+
+  RDSEndpoint:
+    Description: RDS endpoint
+    Value: !GetAtt Phase3.Outputs.RDSEndpoint
+
+  EfsId:
+    Description: EFS FileSystem ID
+    Value: !GetAtt Phase3.Outputs.EfsId

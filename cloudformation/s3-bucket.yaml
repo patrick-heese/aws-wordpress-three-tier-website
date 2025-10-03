@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  S3 bucket to host nested CloudFormation templates for WordPress project.
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: Globally unique bucket name
+
+  AccountId:
+    Type: String
+    Description: AWS Account ID where CloudFormation stacks are deployed
+
+  Region:
+    Type: String
+    Default: us-east-1
+    Description: AWS region for CloudFormation SourceArn condition
+
+Resources:
+  CfnArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value: !Sub "${BucketName}-cfn-artifacts"
+
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CfnArtifactsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFormationReadNestedTemplates
+            Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action:
+              - s3:GetObject
+              - s3:GetBucketLocation
+            Resource:
+              - !Sub "arn:aws:s3:::${BucketName}"
+              - !Sub "arn:aws:s3:::${BucketName}/cfn/*"
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AccountId
+              ArnLike:
+                aws:SourceArn: !Sub "arn:aws:cloudformation:${Region}:${AccountId}:stack/*"
+
+Outputs:
+  BucketName:
+    Description: Name of the S3 bucket for nested CloudFormation templates
+    Value: !Ref CfnArtifactsBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-BucketName"
+
+  BucketArn:
+    Description: ARN of the S3 bucket
+    Value: !GetAtt CfnArtifactsBucket.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-BucketArn"
+
+  BucketRegionalDomainName:
+    Description: Regional domain name (used in TemplateURL)
+    Value: !GetAtt CfnArtifactsBucket.RegionalDomainName
+    Export:
+      Name: !Sub "${AWS::StackName}-BucketRegionalDomainName"
+
+  BucketWebsiteURL:
+    Description: Convenience S3 URL for TemplateURL references
+    Value: !Sub "https://${BucketName}.s3.${Region}.amazonaws.com/"
+    Export:
+      Name: !Sub "${AWS::StackName}-BucketWebsiteURL"
