@@ -10,11 +10,11 @@ An optional **Bastion Host** can be deployed for secure SSH access to the privat
 - **Amazon VPC** – Custom networking with public/private subnets, route tables, and Internet Gateway (IGW).  
 - **Internet Gateway (IGW)** – Provides outbound internet access for **public** subnets (e.g., ALB, optional Bastion) and inbound access to the ALB.  
 - **NAT Gateway** – Enables **private** subnets (application servers, RDS) to initiate **outbound** internet connections (package updates, WordPress downloads, EFS utils, salts API) while remaining **inaccessible from the internet**.  
-- **Amazon EC2** – Two WordPress app servers deployed in **private** subnets.  
-- **Amazon Application Load Balancer (ALB)** – Public-facing load balancer distributing HTTP traffic to app servers.  
+- **Amazon EC2** – Two WordPress application servers deployed in **private** subnets.  
+- **Amazon Application Load Balancer (ALB)** – Public-facing load balancer distributing HTTP traffic to application servers.  
 - **Amazon EFS** – Shared storage for WordPress files across EC2 instances.  
 - **Amazon RDS (MySQL Multi-AZ)** – Highly available relational database backend for WordPress. RDS resides in private subnets and does not require internet egress.  
-- **Security Groups** – Enforcing least-privilege rules between ALB, app servers, database, and optional Bastion Host.  
+- **Security Groups** – Enforcing least-privilege rules between ALB, application servers, database, and optional Bastion Host.  
 - **IAM Roles/Policies** – S3 bucket policy to allow CloudFormation to read nested templates.  
 - **Amazon S3** – Storing nested CloudFormation templates and deployment artifacts.  
 
@@ -84,7 +84,7 @@ An optional **Bastion Host** can be deployed for secure SSH access to the privat
 	--capabilities CAPABILITY_NAMED_IAM
 	```
 	
-**Note:** The IAM capability flag is included for simplicity. It’s only strictly required if the templates create or modify IAM resources (e.g., when adding Secrets Manager access via an EC2 Instance Profile). Also, ensure the AWS CLI is configured (`aws configure`) with credentials that have sufficient permissions to manage **S3**, **EC2**, **RDS**, **EFS**, **VPCs**, **Subnets**, **Route Tables**, **NAT Gateways**, **IGW**, **Elastic IPs**, **ALB**, and **Security Groups**.  
+**Note:** The `CAPABILITY_NAMED_IAM` flag is included for simplicity. It’s only strictly required if the templates create or modify IAM resources (e.g., when adding Secrets Manager access via an EC2 Instance Profile). Also, ensure the AWS CLI is configured (`aws configure`) with credentials that have sufficient permissions to manage **S3**, **EC2**, **RDS**, **EFS**, **VPCs**, **Subnets**, **Route Tables**, **NAT Gateways**, **IGW**, **Elastic IPs**, **ALB**, and **Security Groups**.  
 
 ## How to Use
 1. **Deploy the infrastructure** using CloudFormation.  
