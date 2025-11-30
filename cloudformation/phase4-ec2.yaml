@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: 2010-09-09
-Description: Phase 4 – Two EC2 app servers in private subnets + Public ALB (robust /health, EFS retries, DB bootstrap)
+Description: Phase 4 - Two EC2 app servers in private subnets + Public ALB (robust /health, EFS retries, DB bootstrap)
 
 Parameters:
   WebAmiId:
@@ -8,15 +8,14 @@ Parameters:
     Description: Amazon Linux 2023 AMI via SSM
   KeyName:
     Type: AWS::EC2::KeyPair::KeyName
-    Description: EC2 KeyPair name (kept even if SSH isn’t exposed)
+    Description: EC2 KeyPair name (kept even if SSH is not exposed)
   DBUser:
     Type: String
     Default: admin
-    Description: WordPress DB user
-  DBPassword:
+    Description: RDS master username
+  DBPasswordParameterName:
     Type: String
-    NoEcho: true
-    Description: WordPress DB password
+    Description: Name of SSM SecureString parameter that stores the RDS master password
 
 Resources:
   WPALB:
@@ -37,9 +36,6 @@ Resources:
 
   WPTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    DependsOn:
-      - AppServer1
-      - AppServer2
     Properties:
       Name: WP-App-TG
       TargetType: instance
@@ -74,6 +70,39 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref WPTargetGroup
 
+  WPAppInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: WPAppSSMPasswordAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/wordpressthreetier/db/master_password
+              # If your SSM parameter uses a custom KMS key, also add kms:Decrypt here
+              # - Effect: Allow
+              #   Action:
+              #     - kms:Decrypt
+              #   Resource: arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/<your-kms-key-id>
+
+  WPAppInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref WPAppInstanceRole
+
   AppServer1:
     Type: AWS::EC2::Instance
     Properties:
@@ -83,6 +112,7 @@ Resources:
       SubnetId: !ImportValue WPPrivateAppSubnet1
       SecurityGroupIds:
         - !ImportValue WPAppSG
+      IamInstanceProfile: !Ref WPAppInstanceProfile
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
           Ebs:
@@ -103,15 +133,24 @@ Resources:
 
               EFS_ID='${EfsId}'
               RDS_HOST='${RdsEndpoint}'
+
               DB_NAME='wordpress'
               DB_USER='${DbUserVal}'
-              DB_PASS='${DbPassVal}'
+              DB_PASS_PARAM='${DbPassParam}'
               ALB_DNS='${AlbDNS}'
+              REGION='${AWS::Region}'
 
               dnf -y update || true
               dnf -y install --allowerasing \
                 httpd php php-cli php-common php-mbstring php-gd php-xml php-mysqlnd php-intl php-zip php-fpm \
-                amazon-efs-utils mariadb105
+                amazon-efs-utils mariadb105 awscli
+              
+              DB_PASS="$(aws ssm get-parameter \
+                --region "$REGION" \
+                --name "$DB_PASS_PARAM" \
+                --with-decryption \
+                --query 'Parameter.Value' \
+                --output text)"
 
               systemctl enable --now php-fpm
               systemctl enable --now httpd
@@ -158,7 +197,16 @@ Resources:
               grep -q "WP_SITEURL" /var/www/html/wp-config.php || printf "define('WP_SITEURL','http://%s');\n" "$ALB_DNS" >> /var/www/html/wp-config.php
 
               if command -v mysql >/dev/null 2>&1; then
-                mysql -h "$RDS_HOST" -u "$DB_USER" -p"$DB_PASS" -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`;" || true
+                for i in $(seq 1 10); do
+                  echo "Attempting to create WordPress DB (try $i)..."
+                  if mysql -h "$RDS_HOST" -u "$DB_USER" -p"$DB_PASS" \
+                    -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` \
+                        CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"; then
+                    echo "Database $DB_NAME is ready."
+                    break
+                  fi
+                  sleep 6
+                done
               fi
 
               systemctl restart php-fpm
@@ -167,8 +215,7 @@ Resources:
               RdsEndpoint: !ImportValue WPRDSEndpoint
               AlbDNS: !GetAtt WPALB.DNSName
               DbUserVal: !Ref DBUser
-              DbPassVal: !Ref DBPassword
-
+              DbPassParam: !Ref DBPasswordParameterName
 
   AppServer2:
     Type: AWS::EC2::Instance
@@ -179,6 +226,7 @@ Resources:
       SubnetId: !ImportValue WPPrivateAppSubnet2
       SecurityGroupIds:
         - !ImportValue WPAppSG
+      IamInstanceProfile: !Ref WPAppInstanceProfile
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
           Ebs:
@@ -201,13 +249,21 @@ Resources:
               RDS_HOST='${RdsEndpoint}'
               DB_NAME='wordpress'
               DB_USER='${DbUserVal}'
-              DB_PASS='${DbPassVal}'
+              DB_PASS_PARAM='${DbPassParam}'
               ALB_DNS='${AlbDNS}'
+              REGION='${AWS::Region}'
 
               dnf -y update || true
               dnf -y install --allowerasing \
                 httpd php php-cli php-common php-mbstring php-gd php-xml php-mysqlnd php-intl php-zip php-fpm \
-                amazon-efs-utils mariadb105
+                amazon-efs-utils mariadb105 awscli
+
+              DB_PASS="$(aws ssm get-parameter \
+                --region "$REGION" \
+                --name "$DB_PASS_PARAM" \
+                --with-decryption \
+                --query 'Parameter.Value' \
+                --output text)"
 
               systemctl enable --now php-fpm
               systemctl enable --now httpd
@@ -254,7 +310,16 @@ Resources:
               grep -q "WP_SITEURL" /var/www/html/wp-config.php || printf "define('WP_SITEURL','http://%s');\n" "$ALB_DNS" >> /var/www/html/wp-config.php
 
               if command -v mysql >/dev/null 2>&1; then
-                mysql -h "$RDS_HOST" -u "$DB_USER" -p"$DB_PASS" -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`;" || true
+                for i in $(seq 1 10); do
+                  echo "Attempting to create WordPress DB (try $i)..."
+                  if mysql -h "$RDS_HOST" -u "$DB_USER" -p"$DB_PASS" \
+                    -e "CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` \
+                        CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"; then
+                    echo "Database $DB_NAME is ready."
+                    break
+                  fi
+                  sleep 6
+                done
               fi
 
               systemctl restart php-fpm
@@ -263,7 +328,7 @@ Resources:
               RdsEndpoint: !ImportValue WPRDSEndpoint
               AlbDNS: !GetAtt WPALB.DNSName
               DbUserVal: !Ref DBUser
-              DbPassVal: !Ref DBPassword
+              DbPassParam: !Ref DBPasswordParameterName
 
 Outputs:
   ALBDNSName:

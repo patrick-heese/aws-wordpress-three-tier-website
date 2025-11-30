@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: 2010-09-09
-Description: Phase 3 – RDS MySQL (Multi-AZ) + DB Subnet Group + EFS (+ optional Bastion)
+Description: Phase 3 - RDS MySQL (Multi-AZ) + DB Subnet Group + EFS (+ optional Bastion)
 
 Parameters:
   DBUser:
@@ -7,10 +7,9 @@ Parameters:
     Default: admin
     Description: Master username for the RDS database
 
-  DBPassword:
+  DBPasswordParameterName:
     Type: String
-    NoEcho: true
-    Description: Master password for the RDS database
+    Description: Name of SSM SecureString parameter that stores the RDS master password
 
   CreateBastion:
     Type: String
@@ -28,11 +27,6 @@ Parameters:
     Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
     Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64"
 
-  AdminIp:
-    Type: String
-    Default: 0.0.0.0/32
-    Description: Your /32 for info output (actual rule is in Phase 2)
-
 Conditions:
   DoBastion:
     !Equals [ !Ref CreateBastion, "true" ]
@@ -49,6 +43,8 @@ Resources:
 
   WPDatabase:
     Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       DBInstanceIdentifier: wp-mysql
       DBInstanceClass: db.t3.micro
@@ -63,7 +59,7 @@ Resources:
       VPCSecurityGroups:
         - !ImportValue WPDBSG
       MasterUsername: !Ref DBUser
-      MasterUserPassword: !Ref DBPassword
+      MasterUserPassword: !Sub "{{resolve:ssm-secure:${DBPasswordParameterName}:1}}"
       DeletionProtection: false
       BackupRetentionPeriod: 7
       CopyTagsToSnapshot: true
@@ -73,6 +69,8 @@ Resources:
 
   EFS:
     Type: AWS::EFS::FileSystem
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       Encrypted: true
       PerformanceMode: generalPurpose

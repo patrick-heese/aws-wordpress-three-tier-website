@@ -1,12 +1,11 @@
 AWSTemplateFormatVersion: 2010-09-09
-Description: Phase 2 – Security Groups for WordPress 3-tier
+Description: Phase 2 - Security Groups for WordPress 3-tier
 
 Parameters:
   AdminIp:
     Type: String
     Default: 0.0.0.0/32
     Description: Your public /32 to allow SSH into Bastion
-    AllowedPattern: '^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/32$'
 
 Resources:
   ALBSG:

@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: 2010-09-09
-Description: Parent stack – WordPress 3-tier (orchestrates Phase 1–4 as nested stacks)
+Description: Parent stack for WordPress 3-tier (orchestrates Phase 1-4 as nested stacks)
 
 Parameters:
   DBUser:
@@ -7,10 +7,9 @@ Parameters:
     Default: admin
     Description: RDS master username
 
-  DBPassword:
+  DBPasswordParameterName:
     Type: String
-    NoEcho: true
-    Description: RDS master password
+    Description: Name of SSM SecureString parameter that stores the RDS master password
 
   VPCCidr:
     Type: String
@@ -60,9 +59,8 @@ Parameters:
   # SSH / Bastion controls (optional- only use if SSH access to application servers is needed)
   AdminIp:
     Type: String
-    Default: 0.0.0.0/32
-    Description: Your public /32 for Bastion SSH (e.g., 203.0.113.5/32)
-    AllowedPattern: '^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/32$'
+    Default: 0.0.0.0/0
+    Description: Your public /32 for Bastion SSH
 
   KeyName:
     Type: AWS::EC2::KeyPair::KeyName
@@ -80,6 +78,8 @@ Parameters:
 Resources:
   Phase1:
     Type: AWS::CloudFormation::Stack
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       TemplateURL: !Ref Phase1TemplateUrl
       Parameters:
@@ -93,6 +93,8 @@ Resources:
 
   Phase2:
     Type: AWS::CloudFormation::Stack
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     DependsOn: Phase1
     Properties:
       TemplateURL: !Ref Phase2TemplateUrl
@@ -101,24 +103,27 @@ Resources:
 
   Phase3:
     Type: AWS::CloudFormation::Stack
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     DependsOn: Phase2
     Properties:
       TemplateURL: !Ref Phase3TemplateUrl
       Parameters:
         DBUser: !Ref DBUser
-        DBPassword: !Ref DBPassword
+        DBPasswordParameterName: !Ref DBPasswordParameterName
         CreateBastion: !Ref CreateBastion
         KeyName: !Ref KeyName
-        AdminIp: !Ref AdminIp
 
   Phase4:
     Type: AWS::CloudFormation::Stack
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     DependsOn: Phase3
     Properties:
       TemplateURL: !Ref Phase4TemplateUrl
       Parameters:
         DBUser: !Ref DBUser
-        DBPassword: !Ref DBPassword
+        DBPasswordParameterName: !Ref DBPasswordParameterName
         KeyName: !Ref KeyName
 
 Outputs:

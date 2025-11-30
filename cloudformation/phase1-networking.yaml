@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: 2010-09-09
-Description: Phase 1 – Networking for WordPress 3-tier (VPC, subnets, IGW, 2× NAT, routes)
+Description: Phase 1 - Networking for WordPress 3-tier (VPC, subnets, IGW, 2 NAT GWs, routes)
 
 Parameters:
   VPCCidr:

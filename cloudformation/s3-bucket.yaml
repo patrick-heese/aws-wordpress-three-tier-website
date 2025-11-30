@@ -1,6 +1,5 @@
 AWSTemplateFormatVersion: 2010-09-09
-Description: >
-  S3 bucket to host nested CloudFormation templates for WordPress project.
+Description: S3 bucket to host nested CloudFormation templates for WordPress project.
 
 Parameters:
   BucketName:
@@ -50,13 +49,13 @@ Resources:
               - s3:GetObject
               - s3:GetBucketLocation
             Resource:
-              - !Sub "arn:aws:s3:::${BucketName}"
-              - !Sub "arn:aws:s3:::${BucketName}/cfn/*"
+              - !Sub "arn:${AWS::Partition}:s3:::${BucketName}"
+              - !Sub "arn:${AWS::Partition}:s3:::${BucketName}/cfn/*"
             Condition:
               StringEquals:
                 aws:SourceAccount: !Ref AccountId
               ArnLike:
-                aws:SourceArn: !Sub "arn:aws:cloudformation:${Region}:${AccountId}:stack/*"
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:cloudformation:${Region}:${AccountId}:stack/*"
 
 Outputs:
   BucketName:

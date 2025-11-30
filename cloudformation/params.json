@@ -1,13 +1,38 @@
 [
-  { "ParameterKey": "DBUser", "ParameterValue": "<YOUR_RDS_USERNAME>" },
-  { "ParameterKey": "DBPassword", "ParameterValue": "<YOUR_RDS_PASSWORD>" },
-
-  { "ParameterKey": "Phase1TemplateUrl", "ParameterValue": "https://<BUCKET>.s3.<REGION>.amazonaws.com/cfn/phase1-networking.yaml" },
-  { "ParameterKey": "Phase2TemplateUrl", "ParameterValue": "https://<BUCKET>.s3.<REGION>.amazonaws.com/cfn/phase2-security.yaml" },
-  { "ParameterKey": "Phase3TemplateUrl", "ParameterValue": "https://<BUCKET>.s3.<REGION>.amazonaws.com/cfn/phase3-rds.yaml" },
-  { "ParameterKey": "Phase4TemplateUrl", "ParameterValue": "https://<BUCKET>.s3.<REGION>.amazonaws.com/cfn/phase4-ec2.yaml" },
-
-  { "ParameterKey": "CreateBastion", "ParameterValue": "true" },
-  { "ParameterKey": "AdminIp", "ParameterValue": "<YOUR_PUBLIC_IP>/32" },
-  { "ParameterKey": "KeyName", "ParameterValue": "<YOUR_KEYPAIR_NAME>" }
+  {
+    "ParameterKey": "DBUser",
+    "ParameterValue": "admin" 
+  },
+  {
+    "ParameterKey": "DBPasswordParameterName",
+    "ParameterValue": "/wordpressthreetier/db/master_password"
+  },
+  {
+    "ParameterKey": "Phase1TemplateUrl",
+    "ParameterValue": "https://testingprojects-148524.s3.us-east-1.amazonaws.com/wordpress/phase1-networking.yaml"
+  },
+  {
+    "ParameterKey": "Phase2TemplateUrl",
+    "ParameterValue": "https://testingprojects-148524.s3.us-east-1.amazonaws.com/wordpress/phase2-security.yaml"
+  },
+  {
+    "ParameterKey": "Phase3TemplateUrl",
+    "ParameterValue": "https://testingprojects-148524.s3.us-east-1.amazonaws.com/wordpress/phase3-rds.yaml"
+  },
+  {
+    "ParameterKey": "Phase4TemplateUrl",
+    "ParameterValue": "https://testingprojects-148524.s3.us-east-1.amazonaws.com/wordpress/phase4-ec2.yaml"
+  },
+  {
+    "ParameterKey": "CreateBastion",
+    "ParameterValue": "true"
+  },
+  {
+    "ParameterKey": "AdminIp",
+    "ParameterValue": "0.0.0.0/0"
+  },
+  {
+    "ParameterKey": "KeyName",
+    "ParameterValue": "wordpress-keypair"
+  }
 ]
