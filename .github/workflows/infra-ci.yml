@@ -1,7 +1,7 @@
 name: infra-ci
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
     paths:
       - 'cloudformation/**'
       - '.github/workflows/infra-ci.yml'
